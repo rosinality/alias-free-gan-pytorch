@@ -84,11 +84,12 @@ class FourierFeature(nn.Module):
     def __init__(self, size, dim, cutoff, eps=1e-8):
         super().__init__()
 
-        coords = torch.linspace(0, 1, size)
+        coords = torch.linspace(-1, 1, size+1)[:-1]
         freqs = torch.linspace(0, cutoff, dim // 4)
 
         self.register_buffer("coords", coords)
         self.register_buffer("freqs", freqs)
+        self.register_buffer("lf", freqs.view(1, dim // 4, 1, 1) * 2 * math.pi * 2 / size)
         self.eps = eps
 
     def forward(self, batch_size, affine=None):
@@ -106,11 +107,11 @@ class FourierFeature(nn.Module):
                 affine.shape[0], 1, 1, 1, affine.shape[-1]
             ).unbind(-1)
 
-            coord_h = coord_h.unsqueeze(0)
-            coord_w = coord_w.unsqueeze(0)
+            coord_h_orig = coord_h.unsqueeze(0)
+            coord_w_orig = coord_w.unsqueeze(0)
 
-            coord_h = -coord_w * r_s + coord_h * r_c + t_y
-            coord_w = coord_w * r_c + coord_h * r_s + t_x
+            coord_h = -coord_w_orig * r_s + coord_h_orig * r_c - t_y * self.lf
+            coord_w = coord_w_orig * r_c + coord_h_orig * r_s - t_x * self.lf
 
             coord_h = torch.cat((torch.sin(coord_h), torch.cos(coord_h)), 1)
             coord_w = torch.cat((torch.sin(coord_w), torch.cos(coord_w)), 1)
