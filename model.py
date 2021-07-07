@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from stylegan2.model import PixelNorm, EqualLinear
+from stylegan2.model import PixelNorm, EqualLinear, EqualConv2d
 from stylegan2.op import conv2d_gradfix, upfirdn2d, fused_leaky_relu
 
 
@@ -81,11 +81,11 @@ def filter_parameters(
 
 
 class FourierFeature(nn.Module):
-    def __init__(self, size, dim, eps=1e-8):
+    def __init__(self, size, dim, cutoff, eps=1e-8):
         super().__init__()
 
         coords = torch.linspace(0, 1, size)
-        freqs = torch.linspace(0, size / 2, dim // 4)
+        freqs = torch.linspace(0, cutoff, dim // 4)
 
         self.register_buffer("coords", coords)
         self.register_buffer("freqs", freqs)
@@ -347,12 +347,13 @@ class Generator(nn.Module):
         band_halfs = filter_parameters["band_halfs"]
         channels = filter_parameters["channels"]
 
-        self.input = FourierFeature(srs[0] + margin * 2, channels[0])
+        self.input = FourierFeature(srs[0] + margin * 2, channels[0], cutoff=cutoffs[0])
         self.affine_fourier = EqualLinear(style_dim, 4)
         self.affine_fourier.weight.detach().zero_()
         self.affine_fourier.bias.detach().copy_(
             torch.tensor([1, 0, 0, 0], dtype=torch.float32)
         )
+        self.conv1 = EqualConv2d(channels[0], channels[0], 1)
 
         self.convs = nn.ModuleList()
         for i in range(len(srs)):
@@ -367,7 +368,7 @@ class Generator(nn.Module):
                 n_taps * up * 2, cutoffs[prev], band_halfs[prev], srs[i] * up * 2
             )
             down_filter = lowpass_filter(
-                n_taps * up * 2, cutoffs[i], band_halfs[i], srs[i] * up * 2
+                n_taps * up, cutoffs[i], band_halfs[i], srs[i] * up * 2
             )
 
             self.convs.append(
@@ -385,9 +386,33 @@ class Generator(nn.Module):
 
         self.to_rgb = ToRGB(channels[-1], style_dim)
 
-    def forward(self, style):
+    def mean_latent(self, n_latent):
+        latent_in = torch.randn(
+            n_latent, self.style_dim, device=self.conv1.weight.device
+        )
+        latent = self.style(latent_in).mean(0, keepdim=True)
+
+        return latent
+
+    def get_transform(self, style, truncation=1, truncation_latent=None):
         latent = self.style(style)
-        out = self.input(latent.shape[0], self.affine_fourier(latent))
+
+        if truncation < 1:
+            latent = truncation_latent + truncation * (latent - truncation_latent)
+
+        return self.affine_fourier(latent)
+
+    def forward(self, style, truncation=1, truncation_latent=None, transform=None):
+        latent = self.style(style)
+
+        if truncation < 1:
+            latent = truncation_latent + truncation * (latent - truncation_latent)
+
+        if transform is None:
+            transform = self.affine_fourier(latent)
+
+        out = self.input(latent.shape[0], transform)
+        out = self.conv1(out)
 
         for conv in self.convs:
             out = conv(out, latent)
