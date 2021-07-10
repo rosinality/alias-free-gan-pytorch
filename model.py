@@ -45,11 +45,16 @@ def lowpass_filter(n_taps, cutoff, band_half, sr):
 
 
 def filter_parameters(
-    n_layer, n_critical, sr_max, cutoff, stopband, channel_max, channel_base
+    n_layer,
+    n_critical,
+    sr_max,
+    cutoff_0,
+    cutoff_n,
+    stopband_0,
+    stopband_n,
+    channel_max,
+    channel_base,
 ):
-    cutoff_0, cutoff_n = cutoff
-    stopband_0, stopband_n = stopband
-
     cutoffs = []
     stopbands = []
     srs = []
@@ -84,12 +89,14 @@ class FourierFeature(nn.Module):
     def __init__(self, size, dim, cutoff, eps=1e-8):
         super().__init__()
 
-        coords = torch.linspace(-1, 1, size+1)[:-1]
+        coords = torch.linspace(-1, 1, size + 1)[:-1]
         freqs = torch.linspace(0, cutoff, dim // 4)
 
         self.register_buffer("coords", coords)
         self.register_buffer("freqs", freqs)
-        self.register_buffer("lf", freqs.view(1, dim // 4, 1, 1) * 2 * math.pi * 2 / size)
+        self.register_buffer(
+            "lf", freqs.view(1, dim // 4, 1, 1) * 2 * math.pi * 2 / size
+        )
         self.eps = eps
 
     def forward(self, batch_size, affine=None):
@@ -150,8 +157,6 @@ class ModulatedConv2d(nn.Module):
         self.kernel_size = kernel_size
         self.in_channel = in_channel
         self.out_channel = out_channel
-        self.upsample = upsample
-        self.downsample = downsample
 
         fan_in = in_channel * kernel_size ** 2
         self.scale = 1 / math.sqrt(fan_in)
@@ -173,10 +178,7 @@ class ModulatedConv2d(nn.Module):
         self.demodulate = demodulate
 
     def __repr__(self):
-        return (
-            f"{self.__class__.__name__}({self.in_channel}, {self.out_channel}, {self.kernel_size}, "
-            f"upsample={self.upsample}, downsample={self.downsample})"
-        )
+        return f"{self.__class__.__name__}({self.in_channel}, {self.out_channel}, {self.kernel_size})"
 
     def forward(self, input, style):
         batch, in_channel, height, width = input.shape
