@@ -22,3 +22,5 @@ train.py supports Weights & Biases logging. If you want to use it, add `wandb=tr
 ![Latent translation sample 2](doc/sample2.gif)
 ![Latent translation sample 3](doc/sample3.gif)
 ![Latent translation sample 4](doc/sample4.gif)
+![Latent translation sample 5](doc/sample5.gif)
+![Latent translation sample 6](doc/sample6.gif)
