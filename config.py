@@ -37,6 +37,6 @@ class GANConfig(MainConfig):
     generator: Instance
     discriminator: Instance
     training: Training
-    path: StrictStr
+    path: StrictStr = None
     wandb: StrictBool = False
     logger: StrictStr = "rich"
