@@ -33,9 +33,12 @@ def resize_multiple(
 
 def resize_worker(img_file, sizes, resample):
     i, file = img_file
-    img = Image.open(file)
-    img = img.convert("RGB")
-    out = resize_multiple(img, sizes=sizes, resample=resample)
+    try:
+        img = Image.open(file)
+        img = img.convert("RGB")
+        out = resize_multiple(img, sizes=sizes, resample=resample)
+    except:
+        out = []
 
     return i, out
 
@@ -51,13 +54,14 @@ def prepare(
 
     with multiprocessing.Pool(n_worker) as pool:
         for i, imgs in tqdm(pool.imap_unordered(resize_fn, files)):
-            for size, img in zip(sizes, imgs):
-                key = f"{size}-{str(i).zfill(5)}".encode("utf-8")
+            if len(imgs) != 0:
+                for size, img in zip(sizes, imgs):
+                    key = f"{size}-{str(i).zfill(5)}".encode("utf-8")
 
-                with env.begin(write=True) as txn:
-                    txn.put(key, img)
+                    with env.begin(write=True) as txn:
+                        txn.put(key, img)
 
-            total += 1
+                total += 1
 
         with env.begin(write=True) as txn:
             txn.put("length".encode("utf-8"), str(total).encode("utf-8"))
