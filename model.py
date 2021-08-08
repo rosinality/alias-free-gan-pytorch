@@ -8,6 +8,102 @@ from stylegan2.model import PixelNorm, EqualLinear, EqualConv2d
 from stylegan2.op import conv2d_gradfix, upfirdn2d, fused_leaky_relu
 
 
+def polyval(coef, x):
+    res = 0
+
+    for i, c in enumerate(coef):
+        res += c * x ** (len(coef) - i - 1)
+
+    return res
+
+
+def bessel_j1(x):
+    rp = [
+        -8.99971225705559398224e8,
+        4.52228297998194034323e11,
+        -7.27494245221818276015e13,
+        3.68295732863852883286e15,
+    ]
+    rq = [
+        1.00000000000000000000e0,
+        6.20836478118054335476e2,
+        2.56987256757748830383e5,
+        8.35146791431949253037e7,
+        2.21511595479792499675e10,
+        4.74914122079991414898e12,
+        7.84369607876235854894e14,
+        8.95222336184627338078e16,
+        5.32278620332680085395e18,
+    ]
+    z1 = 1.46819706421238932572e1
+    z2 = 4.92184563216946036703e1
+
+    pp = [
+        7.62125616208173112003e-4,
+        7.31397056940917570436e-2,
+        1.12719608129684925192e0,
+        5.11207951146807644818e0,
+        8.42404590141772420927e0,
+        5.21451598682361504063e0,
+        1.00000000000000000254e0,
+    ]
+    pq = [
+        5.71323128072548699714e-4,
+        6.88455908754495404082e-2,
+        1.10514232634061696926e0,
+        5.07386386128601488557e0,
+        8.39985554327604159757e0,
+        5.20982848682361821619e0,
+        9.99999999999999997461e-1,
+    ]
+    qp = [
+        5.10862594750176621635e-2,
+        4.98213872951233449420e0,
+        7.58238284132545283818e1,
+        3.66779609360150777800e2,
+        7.10856304998926107277e2,
+        5.97489612400613639965e2,
+        2.11688757100572135698e2,
+        2.52070205858023719784e1,
+    ]
+    qq = [
+        1.00000000000000000000e0,
+        7.42373277035675149943e1,
+        1.05644886038262816351e3,
+        4.98641058337653607651e3,
+        9.56231892404756170795e3,
+        7.99704160447350683650e3,
+        2.82619278517639096600e3,
+        3.36093607810698293419e2,
+    ]
+
+    x = torch.as_tensor(x, dtype=torch.float64)
+
+    z = x * x
+    less5 = polyval(rp, z) / polyval(rq, z)
+    less5 = less5 * x * (z - z1) * (z - z2)
+
+    w = 5 / x
+    z = w * w
+    p = polyval(pp, z) / polyval(pq, z)
+    q = polyval(qp, z) / polyval(qq, z)
+    xn = x - (3 / 4 * math.pi)
+    p = p * torch.cos(xn) - w * q * torch.sin(xn)
+    more5 = p * math.sqrt(2 / math.pi) / torch.sqrt(x)
+
+    y = torch.empty_like(x)
+    flag = torch.abs(x) < 5
+    y[flag] = less5[flag]
+    y[~flag] = more5[~flag]
+
+    return y
+
+
+def jinc(x):
+    pix = math.pi * x
+    return 2 * bessel_j1(pix) / pix
+
+
 def kaiser_attenuation(n_taps, f_h, sr):
     df = (2 * f_h) / (sr / 2)
 
@@ -36,10 +132,19 @@ def kaiser_window(n_taps, f_h, sr):
     )
 
 
-def lowpass_filter(n_taps, cutoff, band_half, sr):
+def lowpass_filter(n_taps, cutoff, band_half, sr, use_jinc=False):
     window = kaiser_window(n_taps, band_half, sr)
     ind = torch.arange(n_taps) - (n_taps - 1) / 2
-    lowpass = 2 * cutoff / sr * torch.sinc(2 * cutoff / sr * ind) * window
+
+    if use_jinc:
+        ind_sq = ind.unsqueeze(1) ** 2
+        window = window.unsqueeze(1)
+        coeff = jinc(torch.sqrt(ind_sq + ind_sq.T))
+        lowpass = (2 * cutoff / sr) ** 2 * coeff * window * window.T
+        lowpass = lowpass.to(torch.float32)
+
+    else:
+        lowpass = 2 * cutoff / sr * torch.sinc(2 * cutoff / sr * ind) * window
 
     return lowpass
 
@@ -89,7 +194,7 @@ class FourierFeature(nn.Module):
     def __init__(self, size, dim, cutoff, eps=1e-8):
         super().__init__()
 
-        coords = torch.linspace(-1, 1, size + 1)[:-1]
+        coords = torch.linspace(-0.5, 0.5, size + 1)[:-1]
         freqs = torch.linspace(0, cutoff, dim // 4)
 
         self.register_buffer("coords", coords)
@@ -209,15 +314,23 @@ class ModulatedConv2d(nn.Module):
 
 
 def upsample(x, kernel, factor, pad=(0, 0)):
-    x = upfirdn2d(x, kernel.unsqueeze(0), up=(factor, 1), pad=(*pad, 0, 0))
-    x = upfirdn2d(x, kernel.unsqueeze(1), up=(1, factor), pad=(0, 0, *pad))
+    if kernel.ndim == 2:
+        x = upfirdn2d(x, kernel, up=(factor, factor), pad=(*pad, *pad))
+
+    else:
+        x = upfirdn2d(x, kernel.unsqueeze(0), up=(factor, 1), pad=(*pad, 0, 0))
+        x = upfirdn2d(x, kernel.unsqueeze(1), up=(1, factor), pad=(0, 0, *pad))
 
     return x
 
 
 def downsample(x, kernel, factor, pad=(0, 0)):
-    x = upfirdn2d(x, kernel.unsqueeze(0), down=(factor, 1), pad=(*pad, 0, 0))
-    x = upfirdn2d(x, kernel.unsqueeze(1), down=(1, factor), pad=(0, 0, *pad))
+    if kernel.ndim == 2:
+        x = upfirdn2d(x, kernel, down=(factor, factor), pad=(*pad, *pad))
+
+    else:
+        x = upfirdn2d(x, kernel.unsqueeze(0), down=(factor, 1), pad=(*pad, 0, 0))
+        x = upfirdn2d(x, kernel.unsqueeze(1), down=(1, factor), pad=(0, 0, *pad))
 
     return x
 
@@ -232,11 +345,19 @@ class AliasFreeActivation(nn.Module):
         upsample,
         downsample,
         margin,
+        padding,
     ):
         super().__init__()
 
         self.bias = nn.Parameter(torch.zeros(out_channel))
-        self.register_buffer("upsample_filter", upsample_filter * upsample)
+
+        if upsample_filter.ndim > 1:
+            upsample_filter = upsample_filter * (upsample ** 2)
+
+        else:
+            upsample_filter = upsample_filter * upsample
+
+        self.register_buffer("upsample_filter", upsample_filter)
         self.register_buffer("downsample_filter", downsample_filter)
 
         self.negative_slope = negative_slope
@@ -245,7 +366,12 @@ class AliasFreeActivation(nn.Module):
         self.margin = margin
 
         p = upsample_filter.shape[0] - upsample
-        self.up_pad = ((p + 1) // 2 + upsample - 1, p // 2)
+
+        if padding:
+            self.up_pad = ((p + 1) // 2 + upsample - 1, p // 2)
+
+        else:
+            self.up_pad = ((p + 1) // 2 + upsample * 2 - 1, p // 2 + upsample)
 
         p = downsample_filter.shape[0] - downsample
         self.down_pad = ((p + 1) // 2, p // 2)
@@ -283,7 +409,12 @@ class AliasFreeConv(nn.Module):
         super().__init__()
 
         self.conv = ModulatedConv2d(
-            in_channel, out_channel, kernel_size, style_dim, demodulate=demodulate
+            in_channel,
+            out_channel,
+            kernel_size,
+            style_dim,
+            demodulate=demodulate,
+            padding=False,
         )
 
         self.activation = AliasFreeActivation(
@@ -294,6 +425,7 @@ class AliasFreeConv(nn.Module):
             upsample * 2,
             2,
             margin=margin,
+            padding=kernel_size != 3,
         )
 
     def forward(self, input, style):
@@ -327,6 +459,7 @@ class Generator(nn.Module):
         filter_parameters,
         margin=10,
         lr_mlp=0.01,
+        use_jinc=False,
     ):
         super().__init__()
 
@@ -368,10 +501,18 @@ class Generator(nn.Module):
                 up = 2
 
             up_filter = lowpass_filter(
-                n_taps * up * 2, cutoffs[prev], band_halfs[prev], srs[i] * up * 2
+                n_taps * up * 2,
+                cutoffs[prev],
+                band_halfs[prev],
+                srs[i] * up * 2,
+                use_jinc=use_jinc,
             )
             down_filter = lowpass_filter(
-                n_taps * up, cutoffs[i], band_halfs[i], srs[i] * up * 2
+                n_taps * up,
+                cutoffs[i],
+                band_halfs[i],
+                srs[i] * up * 2,
+                use_jinc=use_jinc,
             )
 
             self.convs.append(
@@ -394,6 +535,14 @@ class Generator(nn.Module):
             n_latent, self.style_dim, device=self.conv1.weight.device
         )
         latent = self.style(latent_in).mean(0, keepdim=True)
+
+        return latent
+
+    def get_latent(self, style, truncation=1, truncation_latent=None):
+        latent = self.style(style)
+
+        if truncation < 1:
+            latent = truncation_latent + truncation * (latent - truncation_latent)
 
         return latent
 

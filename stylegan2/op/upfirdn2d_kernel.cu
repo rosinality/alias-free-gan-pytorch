@@ -313,6 +313,40 @@ torch::Tensor upfirdn2d_op(const torch::Tensor &input,
 
     //
 
+    if (p.up_x == 4 && p.up_y == 4 && p.down_x == 1 && p.down_y == 1 &&
+        p.kernel_h <= 24 && p.kernel_w <= 24) {
+      cuda_kernel =
+          (void *)upfirdn2d_kernel<scalar_t, 4, 4, 1, 1, 24, 24, 8, 32>;
+      tile_out_h = 8;
+      tile_out_w = 32;
+    }
+
+    if (p.up_x == 2 && p.up_y == 2 && p.down_x == 1 && p.down_y == 1 &&
+        p.kernel_h <= 12 && p.kernel_w <= 12) {
+      cuda_kernel =
+          (void *)upfirdn2d_kernel<scalar_t, 2, 2, 1, 1, 12, 12, 8, 32>;
+      tile_out_h = 8;
+      tile_out_w = 32;
+    }
+
+    if (p.up_x == 1 && p.up_y == 1 && p.down_x == 4 && p.down_y == 4 &&
+        p.kernel_h <= 24 && p.kernel_w <= 24) {
+      cuda_kernel =
+          (void *)upfirdn2d_kernel<scalar_t, 1, 1, 4, 4, 24, 24, 8, 32>;
+      tile_out_h = 8;
+      tile_out_w = 32;
+    }
+
+    if (p.up_x == 1 && p.up_y == 1 && p.down_x == 2 && p.down_y == 2 &&
+        p.kernel_h <= 12 && p.kernel_w <= 12) {
+      cuda_kernel =
+          (void *)upfirdn2d_kernel<scalar_t, 1, 1, 2, 2, 12, 12, 8, 32>;
+      tile_out_h = 8;
+      tile_out_w = 32;
+    }
+
+    //
+
     if (p.up_x == 1 && p.up_y == 1 && p.down_x == 1 && p.down_y == 1 &&
         p.kernel_h <= 4 && p.kernel_w <= 4) {
       cuda_kernel =
