@@ -139,7 +139,7 @@ def lowpass_filter(n_taps, cutoff, band_half, sr, use_jinc=False):
     if use_jinc:
         ind_sq = ind.unsqueeze(1) ** 2
         window = window.unsqueeze(1)
-        coeff = jinc(torch.sqrt(ind_sq + ind_sq.T))
+        coeff = jinc((2 * cutoff / sr) * torch.sqrt(ind_sq + ind_sq.T))
         lowpass = (2 * cutoff / sr) ** 2 * coeff * window * window.T
         lowpass = lowpass.to(torch.float32)
 
