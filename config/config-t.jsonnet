@@ -18,7 +18,8 @@
             channel_base: std.pow(2, 14)
         },
         margin: 10,
-        lr_mlp: 0.01
+        lr_mlp: 0.01,
+        ema: std.pow(0.5, 32 / (20 * 1e3))
     },
 
     discriminator: {
@@ -34,7 +35,7 @@
         n_sample: 32,
         r1: 10,
         d_reg_every: 16,
-        lr_g: 3e-3,
+        lr_g: 2.5e-3,
         lr_d: 2.5e-3,
         augment: false,
         augment_p: 0,

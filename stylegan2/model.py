@@ -149,14 +149,17 @@ class EqualLinear(nn.Module):
         self.lr_mul = lr_mul
 
     def forward(self, input):
+        bias = self.bias
+
+        if bias is not None:
+            bias = self.bias * self.lr_mul
+
         if self.activation:
             out = F.linear(input, self.weight * self.scale)
-            out = fused_leaky_relu(out, self.bias * self.lr_mul)
+            out = fused_leaky_relu(out, bias)
 
         else:
-            out = F.linear(
-                input, self.weight * self.scale, bias=self.bias * self.lr_mul
-            )
+            out = F.linear(input, self.weight * self.scale, bias=bias)
 
         return out
 
@@ -695,4 +698,3 @@ class Discriminator(nn.Module):
         out = self.final_linear(out)
 
         return out
-

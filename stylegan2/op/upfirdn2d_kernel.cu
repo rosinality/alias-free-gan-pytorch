@@ -29,6 +29,9 @@ struct UpFirDn2DKernelParams {
   int pad_y0;
   int pad_y1;
 
+  int flip;
+  float gain;
+
   int major_dim;
   int in_h;
   int in_w;
@@ -61,6 +64,9 @@ __global__ void upfirdn2d_kernel_large(scalar_t *out, const scalar_t *input,
   int h = min(max(floor_div(mid_y + p.kernel_h, p.up_y), 0), p.in_h) - in_y;
   int kernel_y = mid_y + p.kernel_h - (in_y + 1) * p.up_y;
 
+  if (p.flip)
+    kernel_y = p.kernel_h - 1 - kernel_y;
+
   for (int loop_major = 0, major_idx = major_idx_base;
        loop_major < p.loop_major && major_idx < p.major_dim;
        loop_major++, major_idx++) {
@@ -71,14 +77,17 @@ __global__ void upfirdn2d_kernel_large(scalar_t *out, const scalar_t *input,
       int w = min(max(floor_div(mid_x + p.kernel_w, p.up_x), 0), p.in_w) - in_x;
       int kernel_x = mid_x + p.kernel_w - (in_x + 1) * p.up_x;
 
+      if (p.flip)
+        kernel_x = p.kernel_w - 1 - kernel_x;
+
       const scalar_t *x_p =
           &input[((major_idx * p.in_h + in_y) * p.in_w + in_x) * p.minor_dim +
                  minor_idx];
       const scalar_t *k_p = &kernel[kernel_y * p.kernel_w + kernel_x];
       int x_px = p.minor_dim;
-      int k_px = -p.up_x;
+      int k_px = (p.flip) ? p.up_x : -p.up_x;
       int x_py = p.in_w * p.minor_dim;
-      int k_py = -p.up_y * p.kernel_w;
+      int k_py = ((p.flip) ? p.up_y : -p.up_y) * p.kernel_w;
 
       scalar_t v = 0.0f;
 
@@ -93,6 +102,7 @@ __global__ void upfirdn2d_kernel_large(scalar_t *out, const scalar_t *input,
         k_p += k_py - w * k_px;
       }
 
+      v *= p.gain;
       out[((major_idx * p.out_h + out_y) * p.out_w + out_x) * p.minor_dim +
           minor_idx] = v;
     }
@@ -129,7 +139,9 @@ __global__ void upfirdn2d_kernel(scalar_t *out, const scalar_t *input,
     scalar_t v = 0.0;
 
     if (kx < p.kernel_w & ky < p.kernel_h) {
-      v = kernel[(p.kernel_h - 1 - ky) * p.kernel_w + (p.kernel_w - 1 - kx)];
+      int kky = (p.flip) ? ky : p.kernel_h - 1 - ky;
+      int kkx = (p.flip) ? kx : p.kernel_w - 1 - kx;
+      v = kernel[kky * p.kernel_w + kkx];
     }
 
     sk[ky][kx] = v;
@@ -193,6 +205,7 @@ __global__ void upfirdn2d_kernel(scalar_t *out, const scalar_t *input,
               v += sx[rel_in_y + y][rel_in_x + x] *
                    sk[kernel_y + y * up_y][kernel_x + x * up_x];
 
+          v *= p.gain;
           out[((major_idx * p.out_h + out_y) * p.out_w + out_x) * p.minor_dim +
               minor_idx] = v;
         }
@@ -204,7 +217,7 @@ __global__ void upfirdn2d_kernel(scalar_t *out, const scalar_t *input,
 torch::Tensor upfirdn2d_op(const torch::Tensor &input,
                            const torch::Tensor &kernel, int up_x, int up_y,
                            int down_x, int down_y, int pad_x0, int pad_x1,
-                           int pad_y0, int pad_y1) {
+                           int pad_y0, int pad_y1, bool flip, float gain) {
   int curDevice = -1;
   cudaGetDevice(&curDevice);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
@@ -228,6 +241,9 @@ torch::Tensor upfirdn2d_op(const torch::Tensor &input,
   p.pad_x1 = pad_x1;
   p.pad_y0 = pad_y0;
   p.pad_y1 = pad_y1;
+
+  p.flip = (flip) ? 1 : 0;
+  p.gain = gain;
 
   p.out_h = (p.in_h * p.up_y + p.pad_y0 + p.pad_y1 - p.kernel_h + p.down_y) /
             p.down_y;

@@ -50,6 +50,7 @@ def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
 
+
 @torch.no_grad()
 def accumulate(model1, model2, decay=0.999):
     par1 = dict(model1.named_parameters())
@@ -62,10 +63,7 @@ def accumulate(model1, model2, decay=0.999):
     buf2 = dict(model2.named_buffers())
 
     for k in buf1.keys():
-        if "ema_var" not in k:
-            continue
-
-        buf1[k].data.mul_(0).add_(buf2[k].data, alpha=1)
+        buf1[k].detach().copy_(buf2[k].detach())
 
 
 def sample_data(loader):
@@ -83,7 +81,7 @@ def d_logistic_loss(real_pred, fake_pred):
 
 def d_r1_loss(real_pred, real_img):
     with conv2d_gradfix.no_weight_gradients():
-        grad_real, = autograd.grad(
+        (grad_real,) = autograd.grad(
             outputs=real_pred.sum(), inputs=real_img, create_graph=True
         )
     grad_penalty = grad_real.pow(2).reshape(grad_real.shape[0], -1).sum(1).mean()
@@ -101,7 +99,7 @@ def g_path_regularize(fake_img, latents, mean_path_length, decay=0.01):
     noise = torch.randn_like(fake_img) / math.sqrt(
         fake_img.shape[2] * fake_img.shape[3]
     )
-    grad, = autograd.grad(
+    (grad,) = autograd.grad(
         outputs=(fake_img * noise).sum(), inputs=latents, create_graph=True
     )
     path_lengths = torch.sqrt(grad.pow(2).sum(2).mean(1))
@@ -305,7 +303,7 @@ def train(conf, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                         normalize=True,
                         value_range=(-1, 1),
                     )
-                    sample = None # cleanup memory
+                    sample = None  # cleanup memory
 
             if i % 10000 == 0:
                 torch.save(

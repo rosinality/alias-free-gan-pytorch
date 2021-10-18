@@ -4,7 +4,7 @@
 torch::Tensor upfirdn2d_op(const torch::Tensor &input,
                            const torch::Tensor &kernel, int up_x, int up_y,
                            int down_x, int down_y, int pad_x0, int pad_x1,
-                           int pad_y0, int pad_y1);
+                           int pad_y0, int pad_y1, bool flip, float gain);
 
 #define CHECK_CUDA(x)                                                          \
   TORCH_CHECK(x.type().is_cuda(), #x " must be a CUDA tensor")
@@ -16,14 +16,15 @@ torch::Tensor upfirdn2d_op(const torch::Tensor &input,
 
 torch::Tensor upfirdn2d(const torch::Tensor &input, const torch::Tensor &kernel,
                         int up_x, int up_y, int down_x, int down_y, int pad_x0,
-                        int pad_x1, int pad_y0, int pad_y1) {
+                        int pad_x1, int pad_y0, int pad_y1, bool flip,
+                        float gain) {
   CHECK_INPUT(input);
   CHECK_INPUT(kernel);
 
   at::DeviceGuard guard(input.device());
 
   return upfirdn2d_op(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1,
-                      pad_y0, pad_y1);
+                      pad_y0, pad_y1, flip, gain);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
