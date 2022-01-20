@@ -511,7 +511,7 @@ class Generator(nn.Module):
             in_size = torch.as_tensor(sizes[prev]).expand(2)
             out_size = torch.as_tensor(sizes[i]).expand(2)
             pad_total = (out_size - 1) * downsample + 1
-            pad_total -= (in_size + 3 - 1) * upsample
+            pad_total -= (in_size + kernel_size - 1) * upsample
             pad_total += n_taps * upsample + n_taps * downsample - 2
             pad_lo = (pad_total + upsample) // 2
             pad_hi = (pad_total - pad_lo).tolist()
